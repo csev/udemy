@@ -1,0 +1,7 @@
+coupons.sqlite
+coupons.sqlite-journal
+coupons.sqlite-wal
+coupons.sqlite-shm
+config.php
+*.swp
+.DS_Store
