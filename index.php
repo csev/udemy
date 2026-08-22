@@ -1,4 +1,5 @@
 <?php
+require __DIR__ . '/utm-live.php';
 require __DIR__ . '/db.php';
 
 $is_admin = coupons_is_admin();
@@ -17,30 +18,41 @@ header('Cache-Control: no-store');
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="Current coupon codes for Dr. Chuck's Udemy courses.">
-  <title>Dr. Chuck on Udemy</title>
+  <meta name="description" content="<?php echo h($META_DESCRIPTION); ?>">
+  <title><?php echo h($SITE_TITLE); ?></title>
   <link rel="icon" href="favicon.ico" type="image/x-icon">
   <link rel="stylesheet" href="styles.css">
+  <script>
+    (function () {
+      var url = new URL(window.location.href);
+      if (url.searchParams.has('utm') && !url.searchParams.has('utm_source')) {
+        url.searchParams.set('utm_source', url.searchParams.get('utm'));
+        window.history.replaceState({}, '', url);
+      }
+    })();
+  </script>
 </head>
 <body>
   <header>
     <div class="header-inner">
-      <h1>Dr. Chuck on Udemy</h1>
+      <h1><?php echo h($SITE_TITLE); ?></h1>
       <p>Current coupon codes</p>
     </div>
   </header>
 
   <main class="clearfix">
+    <?php if ($HERO_IMAGE !== ''): ?>
     <img
       class="hero-image"
-      src="assets/chuck.jpg"
-      alt="Dr. Chuck">
+      src="<?php echo h($HERO_IMAGE); ?>"
+      alt="<?php echo h($DISPLAY_NAME); ?>">
+    <?php endif; ?>
 
     <h2>Welcome</h2>
-    <p>Hi, I’m Dr. Chuck. You can continue to my Udemy homepage, or use one of the coupon links below while it is still valid.</p>
+    <p><?php echo h($INTRO); ?></p>
 
     <ul class="actions" aria-label="Udemy homepage">
-      <li><a href="<?php echo h($UDEMY_HOMEPAGE); ?>">Continue to Dr. Chuck’s Udemy homepage</a></li>
+      <li><a href="<?php echo h($UDEMY_HOMEPAGE); ?>"><?php echo h($HOMEPAGE_LINK_TEXT); ?></a></li>
     </ul>
 
     <h2>Current coupons</h2>
@@ -63,7 +75,7 @@ header('Cache-Control: no-store');
   </main>
 
   <footer>
-    <p>udemy.dr-chuck.com</p>
+    <p><?php echo h($SITE_HOST); ?></p>
     <?php if ($is_admin): ?>
       <p class="note"><a href="crud.php">Edit coupons</a></p>
     <?php endif; ?>

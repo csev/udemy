@@ -33,6 +33,48 @@ if (!isset($UDEMY_HOMEPAGE) || !is_string($UDEMY_HOMEPAGE) || trim($UDEMY_HOMEPA
 $ADMIN_PASSWORD = trim($ADMIN_PASSWORD);
 $UDEMY_HOMEPAGE = trim($UDEMY_HOMEPAGE);
 
+if (!isset($DISPLAY_NAME) || !is_string($DISPLAY_NAME) || trim($DISPLAY_NAME) === '') {
+    header('Content-Type: text/plain; charset=utf-8');
+    echo "Set \$DISPLAY_NAME in config.php.\n";
+    exit;
+}
+$DISPLAY_NAME = trim($DISPLAY_NAME);
+
+if (!isset($SITE_HOST) || !is_string($SITE_HOST) || trim($SITE_HOST) === '') {
+    header('Content-Type: text/plain; charset=utf-8');
+    echo "Set \$SITE_HOST in config.php.\n";
+    exit;
+}
+$SITE_HOST = trim($SITE_HOST);
+
+if (!isset($SITE_TITLE) || !is_string($SITE_TITLE) || trim($SITE_TITLE) === '') {
+    $SITE_TITLE = $DISPLAY_NAME . ' on Udemy';
+} else {
+    $SITE_TITLE = trim($SITE_TITLE);
+}
+
+if (!isset($INTRO) || !is_string($INTRO) || trim($INTRO) === '') {
+    $INTRO = 'Hi, I’m ' . $DISPLAY_NAME . '. You can continue to my Udemy homepage, or use one of the coupon links below while it is still valid.';
+} else {
+    $INTRO = trim($INTRO);
+}
+
+function coupons_possessive($name) {
+    if (preg_match('/s$/i', $name)) {
+        return $name . '’';
+    }
+    return $name . '’s';
+}
+
+$HOMEPAGE_LINK_TEXT = 'Continue to ' . coupons_possessive($DISPLAY_NAME) . ' Udemy homepage';
+$META_DESCRIPTION = 'Current coupon codes for ' . coupons_possessive($DISPLAY_NAME) . ' Udemy courses.';
+
+if (!isset($HERO_IMAGE) || !is_string($HERO_IMAGE)) {
+    $HERO_IMAGE = '';
+} else {
+    $HERO_IMAGE = trim($HERO_IMAGE);
+}
+
 define('COUPONS_DB_FILE', __DIR__ . '/coupons.sqlite');
 define('COUPONS_ADMIN_COOKIE', 'udemy_admin');
 define('COUPONS_ADMIN_COOKIE_DAYS', 30);

@@ -6,7 +6,7 @@ if (session_status() !== PHP_SESSION_ACTIVE) {
 }
 
 function crud_require_password() {
-    global $ADMIN_PASSWORD;
+    global $ADMIN_PASSWORD, $SITE_HOST;
 
     if (coupons_is_admin()) {
         coupons_set_login_cookie();
@@ -43,7 +43,7 @@ function crud_require_password() {
   <header>
     <div class="header-inner">
       <h1>Coupon admin</h1>
-      <p>udemy.dr-chuck.com</p>
+      <p><?php echo h($SITE_HOST); ?></p>
     </div>
   </header>
   <main>
@@ -214,7 +214,7 @@ header('Cache-Control: no-store');
   <header>
     <div class="header-inner">
       <h1>Coupon admin</h1>
-      <p><a href="index.php">View public page</a> · <a href="crud.php?logout=1">Log out</a></p>
+      <p><a href="index.php">View public page</a> · <a href="utm-live.php">UTM Live</a> · <a href="crud.php?logout=1">Log out</a></p>
     </div>
   </header>
 
@@ -322,7 +322,7 @@ header('Cache-Control: no-store');
   </main>
 
   <footer>
-    <p>udemy.dr-chuck.com</p>
+    <p><?php echo h($SITE_HOST); ?></p>
   </footer>
   <script>
     (function () {

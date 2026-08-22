@@ -2,6 +2,11 @@ coupons.sqlite
 coupons.sqlite-journal
 coupons.sqlite-wal
 coupons.sqlite-shm
+utm.sqlite
+utm.sqlite-journal
+utm.sqlite-wal
+utm.sqlite-shm
+utm-password.php
 config.php
 *.swp
 .DS_Store
