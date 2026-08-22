@@ -24,5 +24,6 @@ Behavior:
 
 Each coupon: course name, link (with coupon code in the URL), short description, expiration date.
 Expired coupons stay in the admin table but are hidden from the public page.
+The public list follows the order set with the Reorder button in crud.php.
 
 No libraries, frameworks, or build step are required.

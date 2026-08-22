@@ -8,7 +8,8 @@ if (session_status() !== PHP_SESSION_ACTIVE) {
 function crud_require_password() {
     global $ADMIN_PASSWORD;
 
-    if (!empty($_SESSION['coupons_ok'])) {
+    if (coupons_is_admin()) {
+        coupons_set_login_cookie();
         return;
     }
 
@@ -18,6 +19,7 @@ function crud_require_password() {
         if (hash_equals($ADMIN_PASSWORD, $got)) {
             $_SESSION['coupons_ok'] = true;
             session_regenerate_id(true);
+            coupons_set_login_cookie();
             header('Location: crud.php');
             exit;
         }
@@ -65,6 +67,7 @@ if (isset($_GET['logout'])) {
     if (session_status() === PHP_SESSION_ACTIVE) {
         session_destroy();
     }
+    coupons_clear_login_cookie();
     header('Location: crud.php');
     exit;
 }
@@ -100,6 +103,7 @@ $form = array(
     'url' => '',
     'description' => '',
     'expires' => '',
+    'warn_clicks' => 0,
 );
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -119,12 +123,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
         header('Location: crud.php');
         exit;
+    } elseif ($action === 'reorder') {
+        $raw = isset($_POST['order']) ? (string) $_POST['order'] : '';
+        $ids = $raw === '' ? array() : explode(',', $raw);
+        if (coupons_reorder($ids)) {
+            header('Location: crud.php?reorder=1');
+            exit;
+        }
+        $flash = 'Could not save the new order.';
+        $flash_error = true;
     } elseif ($action === 'save') {
         $id = isset($_POST['id']) ? (int) $_POST['id'] : 0;
         $form['course_name'] = crud_clip(isset($_POST['course_name']) ? $_POST['course_name'] : '', 200);
         $form['url'] = crud_clip(isset($_POST['url']) ? $_POST['url'] : '', 1000);
         $form['description'] = crud_clip(isset($_POST['description']) ? $_POST['description'] : '', 500);
         $form['expires'] = crud_clip(isset($_POST['expires']) ? $_POST['expires'] : '', 10);
+        $form['warn_clicks'] = !empty($_POST['warn_clicks']) ? 1 : 0;
         if ($id > 0) {
             $form['id'] = (string) $id;
         }
@@ -149,20 +163,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $stmt = $db->prepare(
                     'UPDATE coupons
                      SET course_name = :course_name, url = :url, description = :description,
-                         expires = :expires
+                         expires = :expires, warn_clicks = :warn_clicks
                      WHERE id = :id'
                 );
                 $stmt->bindValue(':id', $id, SQLITE3_INTEGER);
             } else {
                 $stmt = $db->prepare(
-                    'INSERT INTO coupons (course_name, url, description, expires)
-                     VALUES (:course_name, :url, :description, :expires)'
+                    'INSERT INTO coupons (course_name, url, description, expires, sort_order, warn_clicks)
+                     VALUES (:course_name, :url, :description, :expires, :sort_order, :warn_clicks)'
                 );
+                $stmt->bindValue(':sort_order', coupons_next_sort_order(), SQLITE3_INTEGER);
             }
             $stmt->bindValue(':course_name', $form['course_name'], SQLITE3_TEXT);
             $stmt->bindValue(':url', $form['url'], SQLITE3_TEXT);
             $stmt->bindValue(':description', $form['description'], SQLITE3_TEXT);
             $stmt->bindValue(':expires', $form['expires'], SQLITE3_TEXT);
+            $stmt->bindValue(':warn_clicks', (int) $form['warn_clicks'], SQLITE3_INTEGER);
             $stmt->execute();
             header('Location: crud.php');
             exit;
@@ -203,6 +219,10 @@ header('Cache-Control: no-store');
   </header>
 
   <main>
+    <?php if ($flash !== ''): ?>
+      <p class="flash<?php echo $flash_error ? ' error' : ''; ?>"><?php echo h($flash); ?></p>
+    <?php endif; ?>
+
     <h2>All coupons</h2>
     <?php if (count($rows) === 0): ?>
       <p>No coupons yet. The public page will redirect to the Udemy homepage until you add one.</p>
@@ -220,6 +240,9 @@ header('Cache-Control: no-store');
                 <a href="<?php echo h($row['url']); ?>"><?php echo h($row['course_name']); ?></a>
                 <?php if (trim($row['description']) !== ''): ?>
                   <div class="muted"><?php echo h($row['description']); ?></div>
+                <?php endif; ?>
+                <?php if (!empty($row['warn_clicks'])): ?>
+                  <div class="muted">click warning on</div>
                 <?php endif; ?>
               </td>
               <td>
@@ -241,12 +264,31 @@ header('Cache-Control: no-store');
           <?php endforeach; ?>
         </table>
       </div>
+      <?php if (count($rows) > 1): ?>
+        <p class="form-actions reorder-toggle-wrap">
+          <button type="button" class="secondary" id="reorder-toggle" aria-expanded="<?php echo isset($_GET['reorder']) ? 'true' : 'false'; ?>" aria-controls="reorder-panel">Reorder</button>
+        </p>
+        <div id="reorder-panel"<?php echo isset($_GET['reorder']) ? '' : ' hidden'; ?>>
+          <p class="note">Drag the rows to change the order on the public page. The new order is saved when you drop an item.</p>
+          <form method="post" action="crud.php" id="reorder-form">
+            <input type="hidden" name="csrf" value="<?php echo h($csrf); ?>">
+            <input type="hidden" name="action" value="reorder">
+            <input type="hidden" name="order" id="reorder-order" value="<?php echo h(implode(',', array_map(function ($row) { return (int) $row['id']; }, $rows))); ?>">
+            <ul class="reorder-list" id="reorder-list">
+              <?php foreach ($rows as $row): ?>
+                <li draggable="true" data-id="<?php echo (int) $row['id']; ?>">
+                  <span class="reorder-grip" aria-hidden="true">⋮⋮</span>
+                  <span class="reorder-title"><?php echo h($row['course_name']); ?></span>
+                  <span class="muted">Expires <?php echo h(coupons_format_date($row['expires'])); ?><?php echo coupons_is_expired($row['expires']) ? ' · expired' : ''; ?></span>
+                </li>
+              <?php endforeach; ?>
+            </ul>
+          </form>
+        </div>
+      <?php endif; ?>
     <?php endif; ?>
 
     <h2><?php echo $editing ? 'Edit coupon' : 'Add coupon'; ?></h2>
-    <?php if ($flash !== ''): ?>
-      <p class="flash<?php echo $flash_error ? ' error' : ''; ?>"><?php echo h($flash); ?></p>
-    <?php endif; ?>
 
     <form method="post" action="crud.php" class="coupon-form">
       <input type="hidden" name="csrf" value="<?php echo h($csrf); ?>">
@@ -266,6 +308,10 @@ header('Cache-Control: no-store');
       <label>Expires
         <input type="date" name="expires" required value="<?php echo h($form['expires']); ?>">
       </label>
+      <label class="check-label">
+        <input type="checkbox" name="warn_clicks" value="1"<?php echo !empty($form['warn_clicks']) ? ' checked' : ''; ?>>
+        Warn before opening: coupon clicks may be limited
+      </label>
       <p class="form-actions">
         <button type="submit"><?php echo $editing ? 'Save changes' : 'Add coupon'; ?></button>
         <?php if ($editing): ?>
@@ -278,5 +324,87 @@ header('Cache-Control: no-store');
   <footer>
     <p>udemy.dr-chuck.com</p>
   </footer>
+  <script>
+    (function () {
+      var toggle = document.getElementById('reorder-toggle');
+      var panel = document.getElementById('reorder-panel');
+      var list = document.getElementById('reorder-list');
+      var form = document.getElementById('reorder-form');
+      var orderInput = document.getElementById('reorder-order');
+      if (!toggle || !panel || !list || !form || !orderInput) return;
+
+      var dragged = null;
+      var startOrder = orderInput.value;
+
+      function show() {
+        panel.hidden = false;
+        toggle.setAttribute('aria-expanded', 'true');
+      }
+
+      function hide() {
+        panel.hidden = true;
+        toggle.setAttribute('aria-expanded', 'false');
+      }
+
+      toggle.addEventListener('click', function () {
+        if (panel.hidden) show(); else hide();
+      });
+
+      function currentOrder() {
+        return Array.prototype.map.call(list.querySelectorAll('li'), function (item) {
+          return item.getAttribute('data-id');
+        }).join(',');
+      }
+
+      function dragAfterElement(y) {
+        var items = Array.prototype.filter.call(list.querySelectorAll('li'), function (item) {
+          return item !== dragged;
+        });
+        var closest = { offset: Number.NEGATIVE_INFINITY, element: null };
+        items.forEach(function (item) {
+          var box = item.getBoundingClientRect();
+          var offset = y - box.top - box.height / 2;
+          if (offset < 0 && offset > closest.offset) {
+            closest = { offset: offset, element: item };
+          }
+        });
+        return closest.element;
+      }
+
+      list.addEventListener('dragstart', function (event) {
+        var item = event.target.closest('li');
+        if (!item || !list.contains(item)) return;
+        dragged = item;
+        item.classList.add('dragging');
+        event.dataTransfer.effectAllowed = 'move';
+        event.dataTransfer.setData('text/plain', item.getAttribute('data-id'));
+      });
+
+      list.addEventListener('dragend', function () {
+        if (dragged) dragged.classList.remove('dragging');
+        dragged = null;
+        var next = currentOrder();
+        if (next !== startOrder) {
+          orderInput.value = next;
+          form.submit();
+        }
+      });
+
+      list.addEventListener('dragover', function (event) {
+        event.preventDefault();
+        if (!dragged) return;
+        var after = dragAfterElement(event.clientY);
+        if (after == null) {
+          list.appendChild(dragged);
+        } else {
+          list.insertBefore(dragged, after);
+        }
+      });
+
+      list.addEventListener('drop', function (event) {
+        event.preventDefault();
+      });
+    })();
+  </script>
 </body>
 </html>

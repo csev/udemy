@@ -34,6 +34,74 @@ $ADMIN_PASSWORD = trim($ADMIN_PASSWORD);
 $UDEMY_HOMEPAGE = trim($UDEMY_HOMEPAGE);
 
 define('COUPONS_DB_FILE', __DIR__ . '/coupons.sqlite');
+define('COUPONS_ADMIN_COOKIE', 'udemy_admin');
+define('COUPONS_ADMIN_COOKIE_DAYS', 30);
+
+function coupons_cookie_secure() {
+    if (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') {
+        return true;
+    }
+    if (isset($_SERVER['SERVER_PORT']) && (int) $_SERVER['SERVER_PORT'] === 443) {
+        return true;
+    }
+    if (!empty($_SERVER['HTTP_X_FORWARDED_PROTO']) && $_SERVER['HTTP_X_FORWARDED_PROTO'] === 'https') {
+        return true;
+    }
+    return false;
+}
+
+function coupons_login_cookie_value() {
+    global $ADMIN_PASSWORD;
+    return hash_hmac('sha256', 'udemy-crud', $ADMIN_PASSWORD);
+}
+
+function coupons_set_login_cookie() {
+    $value = coupons_login_cookie_value();
+    $expires = time() + (COUPONS_ADMIN_COOKIE_DAYS * 86400);
+    $secure = coupons_cookie_secure();
+    if (PHP_VERSION_ID >= 70300) {
+        setcookie(COUPONS_ADMIN_COOKIE, $value, array(
+            'expires' => $expires,
+            'path' => '/',
+            'secure' => $secure,
+            'httponly' => true,
+            'samesite' => 'Lax',
+        ));
+    } else {
+        setcookie(COUPONS_ADMIN_COOKIE, $value, $expires, '/', '', $secure, true);
+    }
+    $_COOKIE[COUPONS_ADMIN_COOKIE] = $value;
+}
+
+function coupons_clear_login_cookie() {
+    $secure = coupons_cookie_secure();
+    if (PHP_VERSION_ID >= 70300) {
+        setcookie(COUPONS_ADMIN_COOKIE, '', array(
+            'expires' => time() - 3600,
+            'path' => '/',
+            'secure' => $secure,
+            'httponly' => true,
+            'samesite' => 'Lax',
+        ));
+    } else {
+        setcookie(COUPONS_ADMIN_COOKIE, '', time() - 3600, '/', '', $secure, true);
+    }
+    unset($_COOKIE[COUPONS_ADMIN_COOKIE]);
+}
+
+function coupons_is_admin() {
+    if (session_status() === PHP_SESSION_ACTIVE && !empty($_SESSION['coupons_ok'])) {
+        return true;
+    }
+    $got = isset($_COOKIE[COUPONS_ADMIN_COOKIE]) ? (string) $_COOKIE[COUPONS_ADMIN_COOKIE] : '';
+    if ($got === '' || !hash_equals(coupons_login_cookie_value(), $got)) {
+        return false;
+    }
+    if (session_status() === PHP_SESSION_ACTIVE) {
+        $_SESSION['coupons_ok'] = true;
+    }
+    return true;
+}
 
 function coupons_db() {
     static $db = null;
@@ -56,23 +124,29 @@ function coupons_db() {
             course_name TEXT NOT NULL,
             url TEXT NOT NULL,
             description TEXT NOT NULL DEFAULT \'\',
-            expires TEXT NOT NULL
+            expires TEXT NOT NULL,
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            warn_clicks INTEGER NOT NULL DEFAULT 0
         )'
     );
     coupons_migrate_drop_code($db);
+    coupons_migrate_sort_order($db);
+    coupons_migrate_warn_clicks($db);
     return $db;
 }
 
-function coupons_migrate_drop_code(SQLite3 $db) {
+function coupons_has_column(SQLite3 $db, $name) {
     $info = $db->query('PRAGMA table_info(coupons)');
-    $has_code = false;
     while ($col = $info->fetchArray(SQLITE3_ASSOC)) {
-        if ($col['name'] === 'coupon_code') {
-            $has_code = true;
-            break;
+        if ($col['name'] === $name) {
+            return true;
         }
     }
-    if (!$has_code) {
+    return false;
+}
+
+function coupons_migrate_drop_code(SQLite3 $db) {
+    if (!coupons_has_column($db, 'coupon_code')) {
         return;
     }
 
@@ -95,6 +169,37 @@ function coupons_migrate_drop_code(SQLite3 $db) {
     $db->exec('COMMIT');
 }
 
+function coupons_migrate_sort_order(SQLite3 $db) {
+    if (!coupons_has_column($db, 'sort_order')) {
+        $db->exec('ALTER TABLE coupons ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0');
+    }
+
+    $count = (int) $db->querySingle('SELECT COUNT(*) FROM coupons');
+    $max = (int) $db->querySingle('SELECT COALESCE(MAX(sort_order), 0) FROM coupons');
+    if ($count === 0 || $max > 0) {
+        return;
+    }
+
+    $result = $db->query(
+        'SELECT id FROM coupons ORDER BY expires ASC, course_name ASC, id ASC'
+    );
+    $stmt = $db->prepare('UPDATE coupons SET sort_order = :ord WHERE id = :id');
+    $ord = 0;
+    while ($row = $result->fetchArray(SQLITE3_ASSOC)) {
+        $ord++;
+        $stmt->bindValue(':ord', $ord, SQLITE3_INTEGER);
+        $stmt->bindValue(':id', (int) $row['id'], SQLITE3_INTEGER);
+        $stmt->execute();
+        $stmt->reset();
+    }
+}
+
+function coupons_migrate_warn_clicks(SQLite3 $db) {
+    if (!coupons_has_column($db, 'warn_clicks')) {
+        $db->exec('ALTER TABLE coupons ADD COLUMN warn_clicks INTEGER NOT NULL DEFAULT 0');
+    }
+}
+
 function h($value) {
     return htmlspecialchars((string) $value, ENT_QUOTES, 'UTF-8');
 }
@@ -114,10 +219,10 @@ function coupons_fetch_all($result) {
 function coupons_active() {
     $db = coupons_db();
     $stmt = $db->prepare(
-        'SELECT id, course_name, url, description, expires
+        'SELECT id, course_name, url, description, expires, sort_order, warn_clicks
          FROM coupons
          WHERE expires >= :today
-         ORDER BY expires ASC, course_name ASC, id ASC'
+         ORDER BY sort_order ASC, id ASC'
     );
     $stmt->bindValue(':today', coupons_today(), SQLITE3_TEXT);
     return coupons_fetch_all($stmt->execute());
@@ -126,9 +231,9 @@ function coupons_active() {
 function coupons_all() {
     $db = coupons_db();
     $result = $db->query(
-        'SELECT id, course_name, url, description, expires
+        'SELECT id, course_name, url, description, expires, sort_order, warn_clicks
          FROM coupons
-         ORDER BY expires DESC, course_name ASC, id ASC'
+         ORDER BY sort_order ASC, id ASC'
     );
     return coupons_fetch_all($result);
 }
@@ -136,7 +241,7 @@ function coupons_all() {
 function coupons_get($id) {
     $db = coupons_db();
     $stmt = $db->prepare(
-        'SELECT id, course_name, url, description, expires
+        'SELECT id, course_name, url, description, expires, sort_order, warn_clicks
          FROM coupons WHERE id = :id'
     );
     $stmt->bindValue(':id', (int) $id, SQLITE3_INTEGER);
@@ -146,6 +251,43 @@ function coupons_get($id) {
 
 function coupons_is_expired($expires) {
     return (string) $expires < coupons_today();
+}
+
+function coupons_next_sort_order() {
+    $db = coupons_db();
+    return (int) $db->querySingle('SELECT COALESCE(MAX(sort_order), 0) FROM coupons') + 1;
+}
+
+function coupons_reorder($ids) {
+    $known = array();
+    foreach (coupons_all() as $row) {
+        $known[(int) $row['id']] = true;
+    }
+
+    $clean = array();
+    foreach ($ids as $id) {
+        $id = (int) $id;
+        if ($id > 0 && isset($known[$id]) && !in_array($id, $clean, true)) {
+            $clean[] = $id;
+        }
+    }
+    if (count($clean) !== count($known)) {
+        return false;
+    }
+
+    $db = coupons_db();
+    $db->exec('BEGIN IMMEDIATE');
+    $stmt = $db->prepare('UPDATE coupons SET sort_order = :ord WHERE id = :id');
+    $ord = 0;
+    foreach ($clean as $id) {
+        $ord++;
+        $stmt->bindValue(':ord', $ord, SQLITE3_INTEGER);
+        $stmt->bindValue(':id', $id, SQLITE3_INTEGER);
+        $stmt->execute();
+        $stmt->reset();
+    }
+    $db->exec('COMMIT');
+    return true;
 }
 
 function coupons_format_date($ymd) {
