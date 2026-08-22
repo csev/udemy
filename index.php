@@ -47,11 +47,11 @@ header('Cache-Control: no-store');
     <ul class="coupons">
       <?php foreach ($coupons as $row): ?>
         <li>
-          <a class="coupon-art<?php echo (!empty($row['warn_clicks']) && !$is_admin) ? ' coupon-launch' : ''; ?>" href="<?php echo h($row['url']); ?>" target="_blank" rel="noopener noreferrer" aria-label="Open coupon for <?php echo h($row['course_name']); ?>">
+          <a class="coupon-art<?php echo !empty($row['warn_clicks']) ? ' coupon-launch' : ''; ?>" href="<?php echo h($row['url']); ?>" target="_blank" rel="noopener noreferrer" aria-label="Open coupon for <?php echo h($row['course_name']); ?>">
             <img src="assets/coupon.svg" alt="">
           </a>
           <div class="coupon-body">
-            <a class="course<?php echo (!empty($row['warn_clicks']) && !$is_admin) ? ' coupon-launch' : ''; ?>" href="<?php echo h($row['url']); ?>" target="_blank" rel="noopener noreferrer"><?php echo h($row['course_name']); ?></a>
+            <a class="course<?php echo !empty($row['warn_clicks']) ? ' coupon-launch' : ''; ?>" href="<?php echo h($row['url']); ?>" target="_blank" rel="noopener noreferrer"><?php echo h($row['course_name']); ?></a>
             <?php if (trim($row['description']) !== ''): ?>
               <p class="desc"><?php echo h($row['description']); ?></p>
             <?php endif; ?>
@@ -65,7 +65,7 @@ header('Cache-Control: no-store');
   <footer>
     <p>udemy.dr-chuck.com</p>
     <?php if ($is_admin): ?>
-      <p class="note">Logged in — click warnings are off so you can test links. <a href="crud.php">Edit coupons</a></p>
+      <p class="note"><a href="crud.php">Edit coupons</a></p>
     <?php endif; ?>
   </footer>
 
