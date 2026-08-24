@@ -22,7 +22,7 @@ Setup:
   5. Open /text.php to edit public-page wording (overrides config.php)
 
 Schema:
-  courses: name, referral URL (parsed into course URL + referral code), description, sort order
+  courses: title, subtitle, referral URL (parsed into course URL + referral code), sort order
   coupons: belong to a course, coupon code, expiration date, optional short description
   site_text: optional overrides for public-page wording (database > config.php > built-in default)
 

@@ -83,7 +83,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $parsed = course_parse_referral_url($course_form['url']);
         $errors = array();
         if ($course_form['course_name'] === '') {
-            $errors[] = 'Course name is required.';
+            $errors[] = 'Course title is required.';
         }
         if ($course_form['url'] === '') {
             $errors[] = 'Course URL is required.';
@@ -312,10 +312,10 @@ header('Cache-Control: no-store');
       <input type="hidden" name="action" value="save_course">
       <input type="hidden" name="id" value="<?php echo h($course_form['id']); ?>">
 
-      <label>Course name
+      <label>Course title
         <input type="text" name="course_name" maxlength="200" required value="<?php echo h($course_form['course_name']); ?>">
       </label>
-      <label>Short description
+      <label>Course subtitle
         <input type="text" name="description" maxlength="500" value="<?php echo h($course_form['description']); ?>">
       </label>
       <label>Course URL
