@@ -1,82 +1,7 @@
 <?php
 require __DIR__ . '/db.php';
 
-if (session_status() !== PHP_SESSION_ACTIVE) {
-    session_start();
-}
-
-function crud_require_password() {
-    global $ADMIN_PASSWORD, $SITE_HOST;
-
-    if (coupons_is_admin()) {
-        coupons_set_login_cookie();
-        return;
-    }
-
-    $error = '';
-    if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-        $got = isset($_POST['password']) ? (string) $_POST['password'] : '';
-        if (hash_equals($ADMIN_PASSWORD, $got)) {
-            $_SESSION['coupons_ok'] = true;
-            session_regenerate_id(true);
-            coupons_set_login_cookie();
-            header('Location: crud.php');
-            exit;
-        }
-        $error = 'Wrong password.';
-    }
-
-    header('Content-Type: text/html; charset=utf-8');
-    header('Cache-Control: no-store');
-    ?>
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="robots" content="noindex,nofollow">
-  <title>Coupon admin</title>
-  <link rel="icon" href="favicon.ico" type="image/x-icon">
-  <link rel="stylesheet" href="styles.css">
-</head>
-<body>
-  <header>
-    <div class="header-inner">
-      <h1>Coupon admin</h1>
-      <p><?php echo h($SITE_HOST); ?></p>
-    </div>
-  </header>
-  <main>
-    <h2>Password</h2>
-    <?php if ($error !== ''): ?>
-      <p class="flash error"><?php echo h($error); ?></p>
-    <?php endif; ?>
-    <form method="post" action="crud.php" class="login-form">
-      <label>Password <input type="password" name="password" autofocus required></label>
-      <button type="submit">View</button>
-    </form>
-  </main>
-</body>
-</html>
-    <?php
-    exit;
-}
-
-if (isset($_GET['logout'])) {
-    $_SESSION = array();
-    if (session_status() === PHP_SESSION_ACTIVE) {
-        session_destroy();
-    }
-    coupons_clear_login_cookie();
-    header('Location: crud.php');
-    exit;
-}
-
-crud_require_password();
-
-if (empty($_SESSION['csrf'])) {
-    $_SESSION['csrf'] = bin2hex(random_bytes(16));
-}
+coupons_require_admin();
 $csrf = $_SESSION['csrf'];
 
 function crud_check_csrf() {
@@ -97,13 +22,19 @@ function crud_clip($value, $max) {
 
 $flash = '';
 $flash_error = false;
-$form = array(
+$course_form = array(
     'id' => '',
     'course_name' => '',
     'url' => '',
     'description' => '',
+    'referral_code' => '',
+);
+$coupon_form = array(
+    'id' => '',
+    'course_id' => '',
+    'coupon_code' => '',
+    'description' => '',
     'expires' => '',
-    'warn_clicks' => 0,
 );
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -113,44 +44,100 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($csrf_error !== '') {
         $flash = $csrf_error;
         $flash_error = true;
-    } elseif ($action === 'delete') {
+    } elseif ($action === 'delete_course') {
+        $id = isset($_POST['id']) ? (int) $_POST['id'] : 0;
+        if ($id > 0) {
+            $stmt = coupons_db()->prepare('DELETE FROM courses WHERE id = :id');
+            $stmt->bindValue(':id', $id, SQLITE3_INTEGER);
+            $stmt->execute();
+        }
+        header('Location: crud.php');
+        exit;
+    } elseif ($action === 'delete_coupon') {
         $id = isset($_POST['id']) ? (int) $_POST['id'] : 0;
         if ($id > 0) {
             $stmt = coupons_db()->prepare('DELETE FROM coupons WHERE id = :id');
             $stmt->bindValue(':id', $id, SQLITE3_INTEGER);
             $stmt->execute();
-            $flash = 'Coupon deleted.';
         }
         header('Location: crud.php');
         exit;
     } elseif ($action === 'reorder') {
         $raw = isset($_POST['order']) ? (string) $_POST['order'] : '';
         $ids = $raw === '' ? array() : explode(',', $raw);
-        if (coupons_reorder($ids)) {
+        if (courses_reorder($ids)) {
             header('Location: crud.php?reorder=1');
             exit;
         }
         $flash = 'Could not save the new order.';
         $flash_error = true;
-    } elseif ($action === 'save') {
+    } elseif ($action === 'save_course') {
         $id = isset($_POST['id']) ? (int) $_POST['id'] : 0;
-        $form['course_name'] = crud_clip(isset($_POST['course_name']) ? $_POST['course_name'] : '', 200);
-        $form['url'] = crud_clip(isset($_POST['url']) ? $_POST['url'] : '', 1000);
-        $form['description'] = crud_clip(isset($_POST['description']) ? $_POST['description'] : '', 500);
-        $form['expires'] = crud_clip(isset($_POST['expires']) ? $_POST['expires'] : '', 10);
-        $form['warn_clicks'] = !empty($_POST['warn_clicks']) ? 1 : 0;
+        $course_form['course_name'] = crud_clip(isset($_POST['course_name']) ? $_POST['course_name'] : '', 200);
+        $course_form['url'] = crud_clip(isset($_POST['url']) ? $_POST['url'] : '', 1000);
+        $course_form['description'] = crud_clip(isset($_POST['description']) ? $_POST['description'] : '', 500);
         if ($id > 0) {
-            $form['id'] = (string) $id;
+            $course_form['id'] = (string) $id;
+        }
+
+        $parsed = course_parse_referral_url($course_form['url']);
+        $errors = array();
+        if ($course_form['course_name'] === '') {
+            $errors[] = 'Course name is required.';
+        }
+        if ($course_form['url'] === '') {
+            $errors[] = 'Course URL is required.';
+        } elseif (!$parsed) {
+            $errors[] = 'Paste the Udemy course URL that includes ?referralCode=...';
+        }
+
+        if ($errors) {
+            $flash = implode(' ', $errors);
+            $flash_error = true;
+        } else {
+            $db = coupons_db();
+            if ($id > 0) {
+                $stmt = $db->prepare(
+                    'UPDATE courses
+                     SET course_name = :course_name, url = :url, description = :description,
+                         referral_code = :referral_code
+                     WHERE id = :id'
+                );
+                $stmt->bindValue(':id', $id, SQLITE3_INTEGER);
+            } else {
+                $stmt = $db->prepare(
+                    'INSERT INTO courses (course_name, url, description, referral_code, sort_order)
+                     VALUES (:course_name, :url, :description, :referral_code, :sort_order)'
+                );
+                $stmt->bindValue(':sort_order', courses_next_sort_order(), SQLITE3_INTEGER);
+            }
+            $stmt->bindValue(':course_name', $course_form['course_name'], SQLITE3_TEXT);
+            $stmt->bindValue(':url', $parsed['url'], SQLITE3_TEXT);
+            $stmt->bindValue(':description', $course_form['description'], SQLITE3_TEXT);
+            $stmt->bindValue(':referral_code', $parsed['referral_code'], SQLITE3_TEXT);
+            $stmt->execute();
+            header('Location: crud.php');
+            exit;
+        }
+    } elseif ($action === 'save_coupon') {
+        $id = isset($_POST['id']) ? (int) $_POST['id'] : 0;
+        $coupon_form['course_id'] = isset($_POST['course_id']) ? (string) ((int) $_POST['course_id']) : '';
+        $coupon_form['coupon_code'] = course_parse_coupon_code(crud_clip(isset($_POST['coupon_code']) ? $_POST['coupon_code'] : '', 1000));
+        $coupon_form['description'] = crud_clip(isset($_POST['coupon_description']) ? $_POST['coupon_description'] : '', 500);
+        $coupon_form['expires'] = crud_clip(isset($_POST['expires']) ? $_POST['expires'] : '', 10);
+        if ($id > 0) {
+            $coupon_form['id'] = (string) $id;
         }
 
         $errors = array();
-        if ($form['course_name'] === '') {
-            $errors[] = 'Course name is required.';
+        $course = courses_get((int) $coupon_form['course_id']);
+        if (!$course) {
+            $errors[] = 'Select a course.';
         }
-        if ($form['url'] === '') {
-            $errors[] = 'Link is required.';
+        if ($coupon_form['coupon_code'] === '') {
+            $errors[] = 'Coupon code is required.';
         }
-        if ($form['expires'] === '' || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $form['expires'])) {
+        if ($coupon_form['expires'] === '' || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $coupon_form['expires'])) {
             $errors[] = 'Expiration date is required.';
         }
 
@@ -162,40 +149,53 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($id > 0) {
                 $stmt = $db->prepare(
                     'UPDATE coupons
-                     SET course_name = :course_name, url = :url, description = :description,
-                         expires = :expires, warn_clicks = :warn_clicks
+                     SET course_id = :course_id, coupon_code = :coupon_code,
+                         description = :description, expires = :expires
                      WHERE id = :id'
                 );
                 $stmt->bindValue(':id', $id, SQLITE3_INTEGER);
             } else {
                 $stmt = $db->prepare(
-                    'INSERT INTO coupons (course_name, url, description, expires, sort_order, warn_clicks)
-                     VALUES (:course_name, :url, :description, :expires, :sort_order, :warn_clicks)'
+                    'INSERT INTO coupons (course_id, coupon_code, description, expires)
+                     VALUES (:course_id, :coupon_code, :description, :expires)'
                 );
-                $stmt->bindValue(':sort_order', coupons_next_sort_order(), SQLITE3_INTEGER);
             }
-            $stmt->bindValue(':course_name', $form['course_name'], SQLITE3_TEXT);
-            $stmt->bindValue(':url', $form['url'], SQLITE3_TEXT);
-            $stmt->bindValue(':description', $form['description'], SQLITE3_TEXT);
-            $stmt->bindValue(':expires', $form['expires'], SQLITE3_TEXT);
-            $stmt->bindValue(':warn_clicks', (int) $form['warn_clicks'], SQLITE3_INTEGER);
+            $stmt->bindValue(':course_id', (int) $coupon_form['course_id'], SQLITE3_INTEGER);
+            $stmt->bindValue(':coupon_code', $coupon_form['coupon_code'], SQLITE3_TEXT);
+            $stmt->bindValue(':description', $coupon_form['description'], SQLITE3_TEXT);
+            $stmt->bindValue(':expires', $coupon_form['expires'], SQLITE3_TEXT);
             $stmt->execute();
             header('Location: crud.php');
             exit;
         }
     }
-} elseif (isset($_GET['edit'])) {
-    $row = coupons_get($_GET['edit']);
+} elseif (isset($_GET['edit_course'])) {
+    $row = courses_get($_GET['edit_course']);
     if ($row) {
-        $form = $row;
+        $course_form = $row;
+        $course_form['url'] = course_referral_url($row);
+    } else {
+        $flash = 'Course not found.';
+        $flash_error = true;
+    }
+} elseif (isset($_GET['edit_coupon'])) {
+    $row = coupons_get($_GET['edit_coupon']);
+    if ($row) {
+        $coupon_form = $row;
     } else {
         $flash = 'Coupon not found.';
         $flash_error = true;
     }
+} elseif (isset($_GET['add_coupon'])) {
+    $course = courses_get($_GET['add_coupon']);
+    if ($course) {
+        $coupon_form['course_id'] = (string) (int) $course['id'];
+    }
 }
 
-$rows = coupons_all();
-$editing = ($form['id'] !== '');
+$courses = courses_public();
+$editing_course = ($course_form['id'] !== '');
+$editing_coupon = ($coupon_form['id'] !== '');
 
 header('Content-Type: text/html; charset=utf-8');
 header('Cache-Control: no-store');
@@ -214,7 +214,7 @@ header('Cache-Control: no-store');
   <header>
     <div class="header-inner">
       <h1>Coupon admin</h1>
-      <p><a href="index.php">View public page</a> · <a href="utm-live.php">UTM Live</a> · <a href="crud.php?logout=1">Log out</a></p>
+      <p><a href="index.php">View public page</a> · <a href="text.php">Edit website text</a> · <a href="utm-live.php">UTM Live</a> · <a href="crud.php?logout=1">Log out</a></p>
     </div>
   </header>
 
@@ -223,40 +223,58 @@ header('Cache-Control: no-store');
       <p class="flash<?php echo $flash_error ? ' error' : ''; ?>"><?php echo h($flash); ?></p>
     <?php endif; ?>
 
-    <h2>All coupons</h2>
-    <?php if (count($rows) === 0): ?>
-      <p>No coupons yet. The public page will redirect to the Udemy homepage until you add one.</p>
+    <h2>Courses</h2>
+    <?php if (count($courses) === 0): ?>
+      <p>No courses yet. The public page will redirect to the Udemy homepage until you add one.</p>
     <?php else: ?>
       <div class="table-wrap">
         <table class="admin-table">
           <tr>
             <th>Course</th>
-            <th>Expires</th>
+            <th>Coupons</th>
             <th></th>
           </tr>
-          <?php foreach ($rows as $row): ?>
-            <tr<?php echo coupons_is_expired($row['expires']) ? ' class="expired"' : ''; ?>>
+          <?php foreach ($courses as $course): ?>
+            <tr>
               <td>
-                <a href="<?php echo h($row['url']); ?>"><?php echo h($row['course_name']); ?></a>
-                <?php if (trim($row['description']) !== ''): ?>
-                  <div class="muted"><?php echo h($row['description']); ?></div>
+                <a href="<?php echo h(course_referral_url($course)); ?>"><?php echo h($course['course_name']); ?></a>
+                <?php if (trim($course['description']) !== ''): ?>
+                  <div class="muted"><?php echo h($course['description']); ?></div>
                 <?php endif; ?>
-                <?php if (!empty($row['warn_clicks'])): ?>
-                  <div class="muted">click warning on</div>
-                <?php endif; ?>
+                <div class="muted">Referral <code><?php echo h($course['referral_code']); ?></code></div>
               </td>
               <td>
-                <?php echo h(coupons_format_date($row['expires'])); ?>
-                <?php if (coupons_is_expired($row['expires'])): ?>
-                  <div class="muted">expired</div>
+                <?php if (count($course['coupons']) === 0): ?>
+                  <div class="muted">None yet</div>
+                <?php else: ?>
+                  <?php foreach ($course['coupons'] as $coupon): ?>
+                    <div<?php echo coupons_is_expired($coupon['expires']) ? ' class="muted"' : ''; ?>>
+                      <code><?php echo h($coupon['coupon_code']); ?></code>
+                      · <?php echo h(coupons_format_date($coupon['expires'])); ?>
+                      <?php if (coupons_is_expired($coupon['expires'])): ?>
+                        · expired
+                      <?php endif; ?>
+                      · <a href="crud.php?edit_coupon=<?php echo (int) $coupon['id']; ?>#coupon-form">Edit</a>
+                      <form method="post" action="crud.php" class="inline-form" onsubmit="return confirm('Delete this coupon?');">
+                        <input type="hidden" name="csrf" value="<?php echo h($csrf); ?>">
+                        <input type="hidden" name="action" value="delete_coupon">
+                        <input type="hidden" name="id" value="<?php echo (int) $coupon['id']; ?>">
+                        <button type="submit" class="linkish">Delete</button>
+                      </form>
+                      <?php if (trim($coupon['description']) !== ''): ?>
+                        <div class="muted"><?php echo h($coupon['description']); ?></div>
+                      <?php endif; ?>
+                    </div>
+                  <?php endforeach; ?>
                 <?php endif; ?>
+                <div><a href="crud.php?add_coupon=<?php echo (int) $course['id']; ?>#coupon-form">Add coupon</a></div>
               </td>
               <td class="row-actions">
-                <a href="crud.php?edit=<?php echo (int) $row['id']; ?>">Edit</a>
-                <form method="post" action="crud.php" onsubmit="return confirm('Delete this coupon?');">
+                <a href="crud.php?edit_course=<?php echo (int) $course['id']; ?>">Edit</a>
+                <form method="post" action="crud.php" onsubmit="return confirm('Delete this course and its coupons?');">
                   <input type="hidden" name="csrf" value="<?php echo h($csrf); ?>">
-                  <input type="hidden" name="action" value="delete">
-                  <input type="hidden" name="id" value="<?php echo (int) $row['id']; ?>">
+                  <input type="hidden" name="action" value="delete_course">
+                  <input type="hidden" name="id" value="<?php echo (int) $course['id']; ?>">
                   <button type="submit" class="linkish">Delete</button>
                 </form>
               </td>
@@ -264,22 +282,22 @@ header('Cache-Control: no-store');
           <?php endforeach; ?>
         </table>
       </div>
-      <?php if (count($rows) > 1): ?>
+      <?php if (count($courses) > 1): ?>
         <p class="form-actions reorder-toggle-wrap">
           <button type="button" class="secondary" id="reorder-toggle" aria-expanded="<?php echo isset($_GET['reorder']) ? 'true' : 'false'; ?>" aria-controls="reorder-panel">Reorder</button>
         </p>
         <div id="reorder-panel"<?php echo isset($_GET['reorder']) ? '' : ' hidden'; ?>>
-          <p class="note">Drag the rows to change the order on the public page. The new order is saved when you drop an item.</p>
+          <p class="note">Drag the courses to change the order on the public page. The new order is saved when you drop an item.</p>
           <form method="post" action="crud.php" id="reorder-form">
             <input type="hidden" name="csrf" value="<?php echo h($csrf); ?>">
             <input type="hidden" name="action" value="reorder">
-            <input type="hidden" name="order" id="reorder-order" value="<?php echo h(implode(',', array_map(function ($row) { return (int) $row['id']; }, $rows))); ?>">
+            <input type="hidden" name="order" id="reorder-order" value="<?php echo h(implode(',', array_map(function ($row) { return (int) $row['id']; }, $courses))); ?>">
             <ul class="reorder-list" id="reorder-list">
-              <?php foreach ($rows as $row): ?>
-                <li draggable="true" data-id="<?php echo (int) $row['id']; ?>">
+              <?php foreach ($courses as $course): ?>
+                <li draggable="true" data-id="<?php echo (int) $course['id']; ?>">
                   <span class="reorder-grip" aria-hidden="true">⋮⋮</span>
-                  <span class="reorder-title"><?php echo h($row['course_name']); ?></span>
-                  <span class="muted">Expires <?php echo h(coupons_format_date($row['expires'])); ?><?php echo coupons_is_expired($row['expires']) ? ' · expired' : ''; ?></span>
+                  <span class="reorder-title"><?php echo h($course['course_name']); ?></span>
+                  <span class="muted"><?php echo count($course['live_coupons']); ?> live coupon<?php echo count($course['live_coupons']) === 1 ? '' : 's'; ?></span>
                 </li>
               <?php endforeach; ?>
             </ul>
@@ -288,37 +306,65 @@ header('Cache-Control: no-store');
       <?php endif; ?>
     <?php endif; ?>
 
-    <h2><?php echo $editing ? 'Edit coupon' : 'Add coupon'; ?></h2>
-
+    <h2><?php echo $editing_course ? 'Edit course' : 'Add course'; ?></h2>
     <form method="post" action="crud.php" class="coupon-form">
       <input type="hidden" name="csrf" value="<?php echo h($csrf); ?>">
-      <input type="hidden" name="action" value="save">
-      <input type="hidden" name="id" value="<?php echo h($form['id']); ?>">
+      <input type="hidden" name="action" value="save_course">
+      <input type="hidden" name="id" value="<?php echo h($course_form['id']); ?>">
 
       <label>Course name
-        <input type="text" name="course_name" maxlength="200" required value="<?php echo h($form['course_name']); ?>">
+        <input type="text" name="course_name" maxlength="200" required value="<?php echo h($course_form['course_name']); ?>">
       </label>
-      <label>Link
-        <input type="url" name="url" maxlength="1000" required placeholder="https://www.udemy.com/course/...?couponCode=..." value="<?php echo h($form['url']); ?>">
+      <label>Course URL
+        <input type="url" name="url" maxlength="1000" required placeholder="https://www.udemy.com/course/...?referralCode=..." value="<?php echo h($course_form['url']); ?>">
       </label>
-      <p class="note">Paste the full course URL, including the coupon code.</p>
+      <p class="note">Paste the course URL Udemy gives you, including <code>?referralCode=...</code>. The referral code is stored from that link.</p>
       <label>Short description
-        <input type="text" name="description" maxlength="500" value="<?php echo h($form['description']); ?>">
-      </label>
-      <label>Expires
-        <input type="date" name="expires" required value="<?php echo h($form['expires']); ?>">
-      </label>
-      <label class="check-label">
-        <input type="checkbox" name="warn_clicks" value="1"<?php echo !empty($form['warn_clicks']) ? ' checked' : ''; ?>>
-        Warn before opening: coupon clicks may be limited
+        <input type="text" name="description" maxlength="500" value="<?php echo h($course_form['description']); ?>">
       </label>
       <p class="form-actions">
-        <button type="submit"><?php echo $editing ? 'Save changes' : 'Add coupon'; ?></button>
-        <?php if ($editing): ?>
+        <button type="submit"><?php echo $editing_course ? 'Save course' : 'Add course'; ?></button>
+        <?php if ($editing_course): ?>
           <a href="crud.php">Cancel</a>
         <?php endif; ?>
       </p>
     </form>
+
+    <h2 id="coupon-form"><?php echo $editing_coupon ? 'Edit coupon' : 'Add coupon'; ?></h2>
+    <?php if (count($courses) === 0): ?>
+      <p>Add a course first, then you can attach coupon codes to it.</p>
+    <?php else: ?>
+      <form method="post" action="crud.php" class="coupon-form">
+        <input type="hidden" name="csrf" value="<?php echo h($csrf); ?>">
+        <input type="hidden" name="action" value="save_coupon">
+        <input type="hidden" name="id" value="<?php echo h($coupon_form['id']); ?>">
+
+        <label>Course
+          <select name="course_id" required>
+            <option value="">Select a course</option>
+            <?php foreach ($courses as $course): ?>
+              <option value="<?php echo (int) $course['id']; ?>"<?php echo (string) $course['id'] === (string) $coupon_form['course_id'] ? ' selected' : ''; ?>><?php echo h($course['course_name']); ?></option>
+            <?php endforeach; ?>
+          </select>
+        </label>
+        <label>Coupon code
+          <input type="text" name="coupon_code" maxlength="1000" required value="<?php echo h($coupon_form['coupon_code']); ?>">
+        </label>
+        <p class="note">Paste the coupon code only. The public coupon link uses the course URL with <code>couponCode</code> instead of <code>referralCode</code>.</p>
+        <label>Expires
+          <input type="date" name="expires" required value="<?php echo h($coupon_form['expires']); ?>">
+        </label>
+        <label>Short description
+          <input type="text" name="coupon_description" maxlength="500" value="<?php echo h($coupon_form['description']); ?>" placeholder="Optional, shown under the code and date">
+        </label>
+        <p class="form-actions">
+          <button type="submit"><?php echo $editing_coupon ? 'Save coupon' : 'Add coupon'; ?></button>
+          <?php if ($editing_coupon): ?>
+            <a href="crud.php">Cancel</a>
+          <?php endif; ?>
+        </p>
+      </form>
+    <?php endif; ?>
   </main>
 
   <footer>
