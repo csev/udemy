@@ -315,13 +315,13 @@ header('Cache-Control: no-store');
       <label>Course name
         <input type="text" name="course_name" maxlength="200" required value="<?php echo h($course_form['course_name']); ?>">
       </label>
+      <label>Short description
+        <input type="text" name="description" maxlength="500" value="<?php echo h($course_form['description']); ?>">
+      </label>
       <label>Course URL
         <input type="url" name="url" maxlength="1000" required placeholder="https://www.udemy.com/course/...?referralCode=..." value="<?php echo h($course_form['url']); ?>">
       </label>
       <p class="note">Paste the course URL Udemy gives you, including <code>?referralCode=...</code>. The referral code is stored from that link.</p>
-      <label>Short description
-        <input type="text" name="description" maxlength="500" value="<?php echo h($course_form['description']); ?>">
-      </label>
       <p class="form-actions">
         <button type="submit"><?php echo $editing_course ? 'Save course' : 'Add course'; ?></button>
         <?php if ($editing_course): ?>
