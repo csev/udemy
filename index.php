@@ -67,7 +67,7 @@ header('Cache-Control: no-store');
     </ul>
 
     <?php if (count($courses_with_coupons) > 0): ?>
-    <h2>Current Courses and Coupons</h2>
+    <h2>Courses with coupons</h2>
     <ul class="coupons">
       <?php foreach ($courses_with_coupons as $course): ?>
         <li>
@@ -110,7 +110,7 @@ header('Cache-Control: no-store');
     <?php endif; ?>
 
     <?php if (count($courses_without_coupons) > 0): ?>
-    <h2><?php echo count($courses_with_coupons) > 0 ? 'More courses' : 'Courses'; ?></h2>
+    <h2><?php echo count($courses_with_coupons) > 0 ? 'Other courses' : 'Courses'; ?></h2>
     <ul class="coupons">
       <?php foreach ($courses_without_coupons as $course): ?>
         <li>
